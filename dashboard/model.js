@@ -1,0 +1,78 @@
+// The radar's value arithmetic, shared by main.ts and the page.
+//
+// One function scores every row, so the number the board shows, the number the page recomputes
+// in the detail view and the number board.json carries are the same by construction. The model
+// (radar-2) is: implied = TVL x multiple x growth x maturity x chains, where
+//   multiple  = the category's calibrated multiple (median market-cap / TVL of the live-token
+//                protocols in that category; the global median when a category has fewer than
+//                three traded peers), clamped to [0.05, 1.0]
+//   growth    = 1 + clamp(change_7d, -60, 120) / 100 x growth_weight
+//   maturity  = 0.6 + min(age_days, 1095) / 1095 x 0.4 (age unknown: 365 days)
+//   chains    = 1 + 0.02 x min(chains - 1, 5) — a protocol live on more chains reaches more users
+// No protocol name is ever special-cased: the same function scores every row.
+
+/** The model's constants, as the dashboard states them and the sandbox may scale them. */
+export const MODEL_DEFAULTS = {
+  growth_weight: 0.5,
+  growth_floor: -60,
+  growth_cap: 120,
+  maturity_floor: 0.6,
+  maturity_range: 0.4,
+  maturity_days: 1095,
+  unknown_age_days: 365,
+  multiple_floor: 0.05,
+  multiple_cap: 1.0,
+  chain_step: 0.02,
+  chain_max: 5,
+};
+
+/** A growth figure clamped to the model's band; null or non-finite growth counts as zero. */
+export function clampGrowth(pct, model) {
+  const raw = pct === null || pct === undefined || !Number.isFinite(pct) ? 0 : pct;
+  return Math.min(model.growth_cap, Math.max(model.growth_floor, raw));
+}
+
+/** A protocol's age in days, or the model's unknown-age fallback. */
+export function ageFor(row, model) {
+  return row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
+}
+
+/** The chain-breadth multiplier: 1.00 on one chain, up to 1.10 on six or more. */
+export function chainMultiplier(row, model) {
+  const n = Array.isArray(row.chains) ? row.chains.length : 0;
+  return 1 + model.chain_step * Math.min(Math.max(n - 1, 0), model.chain_max);
+}
+
+/** The implied value of one row. `sandbox` may scale the multiple and override the growth weight. */
+export function impliedOf(row, model, sandbox) {
+  const multiple = row.multiple * (sandbox && sandbox.baseScale ? sandbox.baseScale : 1);
+  const weight = sandbox && typeof sandbox.growthWeight === 'number' ? sandbox.growthWeight : model.growth_weight;
+  const growthMult = 1 + (clampGrowth(row.change_7d, model) / 100) * weight;
+  const age = ageFor(row, model);
+  const maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+  const value = row.tvl_usd * multiple * growthMult * maturity * chainMultiplier(row, model);
+  return Math.max(1, Math.round(value));
+}
+
+/** Every factor behind one row's implied value, for the detail view. */
+export function factorsOf(row, model, sandbox) {
+  const multiple = row.multiple * (sandbox && sandbox.baseScale ? sandbox.baseScale : 1);
+  const weight = sandbox && typeof sandbox.growthWeight === 'number' ? sandbox.growthWeight : model.growth_weight;
+  const growth = clampGrowth(row.change_7d, model);
+  const growthMult = 1 + (growth / 100) * weight;
+  const age = ageFor(row, model);
+  const maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+  const chainMult = chainMultiplier(row, model);
+  return {
+    multiple,
+    multipleSource: row.multiple_source || 'global',
+    growthPct: growth,
+    growthMultiplier: growthMult,
+    ageDays: age,
+    ageKnown: row.age_days !== null && row.age_days !== undefined,
+    maturityMultiplier: maturity,
+    chainMultiplier: chainMult,
+    chainCount: Array.isArray(row.chains) ? row.chains.length : 0,
+    implied: impliedOf(row, model, sandbox),
+  };
+}
