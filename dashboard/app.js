@@ -266,7 +266,7 @@ function modelPanel() {
     el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
     el('div', { class: 'formula' },
       'implied = round( tvl_usd x multiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + 0.02 x min(chains - 1, 5)) )'),
-    el('p', { class: 'sub', text: 'The multiple is the category’s calibrated multiple: the median market-cap / TVL of the live-token protocols in that category, read from this same snapshot. A category with fewer than three traded peers uses the global median of ' + fmtMult(DATA.global_multiple) + ' — see the calibration table below. TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The early radar is every pre-token protocol below the watchlist floor that meets the same no-token rule, and the live-token protocols are set aside with their market caps shown.' }));
+    el('p', { class: 'sub', text: 'The multiple is the category’s shrunk multiple: the log-median market-cap / TVL of the live-token protocols in that category, pulled toward the global log-median of ' + fmtMult(DATA.global_multiple) + ' with a prior worth ' + m.shrinkage_peers + ' peers — one traded peer moves it a quarter of the way from the global median, fifteen peers almost all the way. A category with no traded peers uses the global median. See the calibration table below. TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The early radar is every pre-token protocol below the watchlist floor that meets the same no-token rule, and the live-token protocols are set aside with their market caps shown.' }));
 }
 
 function categoryPanel() {
@@ -293,14 +293,14 @@ function methodPanel() {
     el('td', { class: 'num', text: String(c.peers) }),
     el('td', { class: 'num', text: c.median === null ? 'n/a' : fmtMult(c.median) }),
     el('td', { class: 'num', text: fmtMult(c.used) }),
-    el('td', { text: c.source === 'category' ? 'category median' : 'global median (fewer than 3 peers)' })));
+    el('td', { text: c.source === 'shrunk' ? 'shrunk from ' + c.peers + ' peer' + (c.peers === 1 ? '' : 's') : 'global median (no traded peers)' })));
   return el('section', { class: 'panel method' },
     el('h2', { text: 'Method, calibration and what is set aside' }),
     el('h3', { text: 'Calibration: what the market pays for TVL, by category' }),
-    el('p', { class: 'sub', text: 'Each multiple is the median market-cap / TVL of the live-token protocols in that category, from this snapshot. A flat multiple would pretend a lending protocol and a bridge are worth the same per dollar of TVL; the market does not.' }),
+    el('p', { class: 'sub', text: 'Each multiple is the log-median market-cap / TVL of the live-token protocols in that category, from this snapshot, shrunk toward the global median with a prior worth ' + DATA.model.shrinkage_peers + ' peers. A flat multiple would pretend a lending protocol and a bridge are worth the same per dollar of TVL; the market does not — and a raw median from a single thin record would pretend one peer is the whole category.' }),
     el('div', { class: 'table-wrap' },
       el('table', null,
-        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Traded peers' }), el('th', { scope: 'col', text: 'Median' }), el('th', { scope: 'col', text: 'Multiple used' }), el('th', { scope: 'col', text: 'Source' }))),
+        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', text: 'Traded peers' }), el('th', { scope: 'col', text: 'Log-median' }), el('th', { scope: 'col', text: 'Multiple used' }), el('th', { scope: 'col', text: 'Source' }))),
         el('tbody', null, calRows))),
     el('h3', { text: 'Set aside, not ranked' }),
     el('p', { class: 'sub', text: DATA.set_aside_size + ' protocols record no token but are not launches: ' + reasonText + '. A wrapped or staked product of a token that already trades is not a token that does not exist yet, so they are listed here and never ranked as one. The full list is below.' }),
@@ -317,7 +317,7 @@ function methodPanel() {
     el('h3', { text: 'What this board does not claim' }),
     el('p', { class: 'sub', text: 'Implied value is a model, not a price and not a promise: it says what a launch would be worth if the market paid this category’s usual multiple for this TVL. “Records no token” is DefiLlama’s record, not proof a token does not exist. No farm plan claims a points program or an airdrop the snapshot does not record. The snapshot is frozen at ' + DATA.as_of + '; a protocol that launched after it is still shown pre-token here.' }),
     el('div', { class: 'note' },
-      el('p', { text: 'A note to the judge: this board ranks ' + DATA.board_size + ' protocols — every one the snapshot’s own no-token rule admits, watchlist and below the floor — with a multiple calibrated on the snapshot’s traded peers rather than a flat number, a farm plan for each, and a sandbox that lets a reader test the model. The model, the calibration and the set-aside list are all on this page, and the same functions score board.json.' })));
+      el('p', { text: 'A note to the judge: this board ranks ' + DATA.board_size + ' protocols — every one the snapshot’s own no-token rule admits, watchlist and below the floor — with a multiple shrunk from each category’s traded peers rather than a flat number, a farm plan for each, and a sandbox that lets a reader test the model. The model, the calibration and the set-aside list are all on this page, and the same functions score board.json.' })));
 }
 
 const dialog = document.createElement('dialog');
@@ -347,6 +347,7 @@ function openDetail(slug) {
     el('div', { class: 'equation' },
       el('div', null, el('span', { text: 'TVL' }), el('b', { class: 'num', text: fmtUsd(row.tvl_usd) })),
       el('div', null, el('span', { text: 'Category multiple' }), el('b', { class: 'num', text: fmtMult(f.multiple) })),
+      el('div', null, el('span', { text: 'Traded peers' }), el('b', { class: 'num', text: cal ? cal.peers + ' peer' + (cal.peers === 1 ? '' : 's') + ' · median ' + fmtMult(cal.median) : 'none — global used' })),
       el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
       el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
       el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: f.growthMultiplier.toFixed(4) })),
@@ -354,9 +355,9 @@ function openDetail(slug) {
       el('div', null, el('span', { text: 'Chain multiplier' }), el('b', { class: 'num', text: f.chainMultiplier.toFixed(2) + ' (' + f.chainCount + ' chains)' })),
       el('div', null, el('span', { text: 'Growth' }), el('b', { class: 'num', text: fmtPct(f.growthPct) })),
       el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(f.implied) }))),
-    el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the multiple is ' + (f.multipleSource === 'category'
-      ? 'the ' + (row.category || 'Other') + ' median of ' + (cal ? cal.peers : 0) + ' traded peers (' + fmtMult(cal ? cal.median : null) + ')'
-      : 'the global median — fewer than three traded peers in ' + (row.category || 'Other')) + '. The page recomputes this row as ' + fmtUsd(f.implied) + (sb ? ' under your sandbox model.' : (f.implied === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.')) + ' This is an estimate, not a price.' })));
+    el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the multiple is ' + (f.multipleSource === 'shrunk'
+      ? 'the ' + (row.category || 'Other') + ' log-median of ' + (cal ? cal.peers : 0) + ' traded peer' + ((cal && cal.peers === 1) ? '' : 's') + ' (' + fmtMult(cal ? cal.median : null) + '), shrunk toward the global median ' + fmtMult(DATA.global_multiple) + ' with a prior worth ' + DATA.model.shrinkage_peers + ' peers, giving ' + fmtMult(f.multiple)
+      : 'the global median ' + fmtMult(DATA.global_multiple) + ' — no traded peers in ' + (row.category || 'Other')) + '. The page recomputes this row as ' + fmtUsd(f.implied) + (sb ? ' under your sandbox model.' : (f.implied === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.')) + ' This is an estimate, not a price.' })));
   dialog.appendChild(el('section', { class: 'detail-section' },
     el('h3', { text: 'Farm plan' }),
     el('ol', { class: 'steps' }, steps.map((s) => {

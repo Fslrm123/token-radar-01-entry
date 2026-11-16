@@ -1,14 +1,15 @@
-// The token radar's model (radar-2): one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model (radar-3): one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every protocol that meets the house's own no-token rule (the watchlist is the
 // floor, never the ceiling): it records no token, and it is not a versioned, wrapped, staked or
 // bridged product of one that trades. Protocols that record no token but fail that rule are set
 // aside with their reason, never ranked as launches.
 //
-// Implied value is calibrated, not flat: each category's multiple is the median market-cap / TVL
-// of the live-token protocols in that category, read from this same snapshot; a category with
-// fewer than three traded peers uses the global median instead. The multiple is clamped to
-// [0.05, 1.0]. Growth, maturity and chain breadth follow the shared arithmetic in
+// Implied value is calibrated, not flat: each category's multiple is the log-median market-cap / TVL
+// of the live-token protocols in that category, shrunk toward the global log-median with a prior
+// worth three peers, so one traded peer moves the multiple a quarter of the way from the global
+// median and fifteen peers move it almost all the way. A category with no traded peers uses the
+// global median. Growth, maturity and chain breadth follow the shared arithmetic in
 // dashboard/model.js, so the page recomputes exactly what board.json carries.
 
 import { impliedOf, MODEL_DEFAULTS } from '../dashboard/model.js';
@@ -37,13 +38,13 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-/** One category's calibration: how many traded peers it has, their median multiple, and the one used. */
+/** One category's calibration: how many traded peers it has, their log-median multiple, and the one used. */
 export interface CalibrationEntry {
   category: string;
   peers: number;
   median: number | null;
   used: number;
-  source: 'category' | 'global';
+  source: 'shrunk' | 'global';
 }
 
 /** The calibration of every category, plus the global fallback. */
@@ -70,7 +71,7 @@ export interface BoardRow {
   token_status: 'pre-token';
   age_days: number | null;
   multiple: number;
-  multiple_source: 'category' | 'global';
+  multiple_source: 'shrunk' | 'global';
   implied_value_usd: number;
   model: {
     base_multiple: number;
@@ -96,7 +97,7 @@ export interface RadarRow {
   listed_at: string | null;
   age_days: number | null;
   multiple: number;
-  multiple_source: 'category' | 'global';
+  multiple_source: 'shrunk' | 'global';
   implied_value_usd: number;
   growth_multiplier: number;
   maturity_multiplier: number;
@@ -144,7 +145,7 @@ export interface RadarData {
 }
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -158,18 +159,18 @@ export class SnapshotError extends Error {
 }
 
 const DAY_MS = 86_400_000;
-const MIN_PEERS = 3;
 
 /** A finite number, else `fallback`. */
 function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-/** The median of a non-empty list of numbers. */
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+/** The log-median of a non-empty list of positive numbers: the geometric median. Ratios are log-normal, so the median is taken in log space, not on the raw ratios. */
+function logMedian(values: number[]): number {
+  const logs = values.map((v) => Math.log(v)).sort((a, b) => a - b);
+  const mid = Math.floor(logs.length / 2);
+  const m = logs.length % 2 === 1 ? logs[mid]! : (logs[mid - 1]! + logs[mid]!) / 2;
+  return Math.exp(m);
 }
 
 /** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
@@ -182,9 +183,12 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
 }
 
 /**
- * The calibration: for every category, the median market-cap / TVL of its live-token protocols
- * (ratios outside (0.001, 50) are discarded as bad records). A category with fewer than three
- * traded peers falls back to the global median. Every multiple is clamped to [0.05, 1.0].
+ * The calibration: for every category, the log-median market-cap / TVL of its live-token protocols
+ * (ratios outside (0.001, 50) are discarded as bad records), shrunk toward the global log-median
+ * with a prior worth `shrinkage_peers` peers: used = exp((n·ln(category) + k·ln(global)) / (n + k)).
+ * One traded peer moves the multiple a quarter of the way from the global median; fifteen peers
+ * move it almost all the way. A category with no traded peers is absent here and uses the global
+ * median. Every multiple is clamped to [0.05, 2.0].
  */
 export function calibrate(protocols: SnapProtocol[]): Calibration {
   const byCat = new Map<string, number[]>();
@@ -199,14 +203,14 @@ export function calibrate(protocols: SnapProtocol[]): Calibration {
     all.push(ratio);
   }
   const clamp = (x: number): number => Math.min(MODEL_DEFAULTS.multiple_cap, Math.max(MODEL_DEFAULTS.multiple_floor, x));
-  const global = clamp(median(all));
+  const global = clamp(logMedian(all));
+  const k = MODEL_DEFAULTS.shrinkage_peers;
   const byCategory: Record<string, CalibrationEntry> = {};
   const table: CalibrationEntry[] = [];
   for (const [category, ratios] of [...byCat.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1))) {
-    const entry: CalibrationEntry =
-      ratios.length >= MIN_PEERS
-        ? { category, peers: ratios.length, median: Math.round(median(ratios) * 1000) / 1000, used: clamp(median(ratios)), source: 'category' }
-        : { category, peers: ratios.length, median: ratios.length > 0 ? Math.round(median(ratios) * 1000) / 1000 : null, used: global, source: 'global' };
+    const catMedian = logMedian(ratios);
+    const used = clamp(Math.exp((ratios.length * Math.log(catMedian) + k * Math.log(global)) / (ratios.length + k)));
+    const entry: CalibrationEntry = { category, peers: ratios.length, median: Math.round(catMedian * 1000) / 1000, used, source: 'shrunk' };
     byCategory[category] = entry;
     table.push(entry);
   }
@@ -214,7 +218,7 @@ export function calibrate(protocols: SnapProtocol[]): Calibration {
 }
 
 /** The multiple one protocol is scored with, from its category's calibration. */
-export function multipleFor(p: SnapProtocol, cal: Calibration): { multiple: number; source: 'category' | 'global' } {
+export function multipleFor(p: SnapProtocol, cal: Calibration): { multiple: number; source: 'shrunk' | 'global' } {
   const entry = cal.byCategory[p.category ?? 'Other'];
   if (entry !== undefined) return { multiple: entry.used, source: entry.source };
   return { multiple: cal.global, source: 'global' };

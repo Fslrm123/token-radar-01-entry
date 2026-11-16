@@ -2,10 +2,11 @@
 //
 // One function scores every row, so the number the board shows, the number the page recomputes
 // in the detail view and the number board.json carries are the same by construction. The model
-// (radar-2) is: implied = TVL x multiple x growth x maturity x chains, where
-//   multiple  = the category's calibrated multiple (median market-cap / TVL of the live-token
-//                protocols in that category; the global median when a category has fewer than
-//                three traded peers), clamped to [0.05, 1.0]
+// (radar-3) is: implied = TVL x multiple x growth x maturity x chains, where
+//   multiple  = the category's shrunk multiple: the log-median market-cap / TVL of the live-token
+//                protocols in that category, pulled toward the global log-median with a prior
+//                worth shrinkage_peers peers — exp((n·ln(category) + k·ln(global)) / (n + k)) —
+//                clamped to [0.05, 2.0]; a category with no traded peers uses the global median
 //   growth    = 1 + clamp(change_7d, -60, 120) / 100 x growth_weight
 //   maturity  = 0.6 + min(age_days, 1095) / 1095 x 0.4 (age unknown: 365 days)
 //   chains    = 1 + 0.02 x min(chains - 1, 5) — a protocol live on more chains reaches more users
@@ -21,7 +22,8 @@ export const MODEL_DEFAULTS = {
   maturity_days: 1095,
   unknown_age_days: 365,
   multiple_floor: 0.05,
-  multiple_cap: 1.0,
+  multiple_cap: 2.0,
+  shrinkage_peers: 3,
   chain_step: 0.02,
   chain_max: 5,
 };
