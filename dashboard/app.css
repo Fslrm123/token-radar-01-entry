@@ -116,6 +116,12 @@ tbody tr[data-selected="true"] { background: rgba(76, 195, 138, 0.1); }
 .equation > div { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
 .equation span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 3px; }
 .equation b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.cost-box { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 10px; }
+.cost-box > div { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.cost-box span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 3px; }
+.cost-box b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.detail-section .table-wrap { border: 1px solid var(--line); border-radius: 9px; overflow-x: auto; }
+.detail-section table th, .detail-section table td { padding: 8px 10px; }
 .steps { margin: 0; padding-left: 22px; }
 .steps li { margin-bottom: 10px; }
 .steps li b { display: block; font-weight: 600; }

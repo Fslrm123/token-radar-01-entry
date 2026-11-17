@@ -12,7 +12,7 @@
 // global median. Growth, maturity and chain breadth follow the shared arithmetic in
 // dashboard/model.js, so the page recomputes exactly what board.json carries.
 
-import { impliedOf, MODEL_DEFAULTS } from '../dashboard/model.js';
+import { factorsOf, MODEL_DEFAULTS } from '../dashboard/model.js';
 import { farmStepsFor } from '../dashboard/farm.js';
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
@@ -38,11 +38,13 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-/** One category's calibration: how many traded peers it has, their log-median multiple, and the one used. */
+/** One category's calibration: how many traded peers it has, their log-median multiple, the middle half of their multiples, and the one used. */
 export interface CalibrationEntry {
   category: string;
   peers: number;
   median: number | null;
+  p25: number | null;
+  p75: number | null;
   used: number;
   source: 'shrunk' | 'global';
 }
@@ -140,12 +142,23 @@ export interface RadarData {
   global_multiple: number;
   rows: RadarRow[];
   live: LiveRow[];
+  peers: LivePeer[];
   calibration: CalibrationEntry[];
   set_aside: SetAsideRow[];
 }
 
+/** A live-token protocol, for the detail view's closest-peers comparison. */
+export interface LivePeer {
+  slug: string;
+  name: string;
+  category: string | null;
+  chains: string[];
+  tvl_usd: number;
+  mcap_usd: number;
+}
+
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -159,11 +172,6 @@ export class SnapshotError extends Error {
 }
 
 const DAY_MS = 86_400_000;
-
-/** A finite number, else `fallback`. */
-function finite(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
 
 /** The log-median of a non-empty list of positive numbers: the geometric median. Ratios are log-normal, so the median is taken in log space, not on the raw ratios. */
 function logMedian(values: number[]): number {
@@ -182,13 +190,26 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
+/** The log-quartiles of a list of positive numbers: the middle half of the ratios, in log space like the median. */
+function logQuartiles(values: number[]): { p25: number; p75: number } {
+  const logs = values.map((v) => Math.log(v)).sort((a, b) => a - b);
+  const at = (q: number): number => {
+    const pos = q * (logs.length - 1);
+    const lo = Math.floor(pos);
+    const hi = Math.ceil(pos);
+    return logs[lo]! + (logs[hi]! - logs[lo]!) * (pos - lo);
+  };
+  return { p25: Math.exp(at(0.25)), p75: Math.exp(at(0.75)) };
+}
+
 /**
  * The calibration: for every category, the log-median market-cap / TVL of its live-token protocols
  * (ratios outside (0.001, 50) are discarded as bad records), shrunk toward the global log-median
  * with a prior worth `shrinkage_peers` peers: used = exp((n·ln(category) + k·ln(global)) / (n + k)).
  * One traded peer moves the multiple a quarter of the way from the global median; fifteen peers
  * move it almost all the way. A category with no traded peers is absent here and uses the global
- * median. Every multiple is clamped to [0.05, 2.0].
+ * median. Every multiple is clamped to [0.05, 2.0]. The quartiles show how wide the peers spread:
+ * a median from peers that disagree by 10x is weaker evidence than one from peers that agree.
  */
 export function calibrate(protocols: SnapProtocol[]): Calibration {
   const byCat = new Map<string, number[]>();
@@ -210,7 +231,9 @@ export function calibrate(protocols: SnapProtocol[]): Calibration {
   for (const [category, ratios] of [...byCat.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1))) {
     const catMedian = logMedian(ratios);
     const used = clamp(Math.exp((ratios.length * Math.log(catMedian) + k * Math.log(global)) / (ratios.length + k)));
-    const entry: CalibrationEntry = { category, peers: ratios.length, median: Math.round(catMedian * 1000) / 1000, used, source: 'shrunk' };
+    const { p25, p75 } = logQuartiles(ratios);
+    const round3 = (x: number): number => Math.round(x * 1000) / 1000;
+    const entry: CalibrationEntry = { category, peers: ratios.length, median: round3(catMedian), p25: round3(p25), p75: round3(p75), used, source: 'shrunk' };
     byCategory[category] = entry;
     table.push(entry);
   }
@@ -259,7 +282,8 @@ function bySlug(protocols: SnapProtocol[]): Map<string, SnapProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
 
-/** The protocols the board ranks, strongest first, with ranks 1..n. */
+/** The protocols the board ranks, strongest first, with ranks 1..n. The model breakdown comes from
+ * the same factorsOf the page uses, so board.json and the detail view can never disagree. */
 export function buildBoard(snapshot: Snapshot, cal: Calibration): BoardRow[] {
   const chosen = snapshot.protocols.filter(isRankable);
   const scored = chosen.map((p) => {
@@ -283,12 +307,8 @@ export function buildBoard(snapshot: Snapshot, cal: Calibration): BoardRow[] {
       maturity_multiplier: 0,
       chain_multiplier: 0,
     };
-    const implied = impliedOf(row, MODEL_DEFAULTS, null);
-    const growthPct = Math.min(MODEL_DEFAULTS.growth_cap, Math.max(MODEL_DEFAULTS.growth_floor, finite(p.change_7d, 0)));
-    const ageForModel = age ?? MODEL_DEFAULTS.unknown_age_days;
-    const maturity = MODEL_DEFAULTS.maturity_floor + (Math.min(Math.max(ageForModel, 0), MODEL_DEFAULTS.maturity_days) / MODEL_DEFAULTS.maturity_days) * MODEL_DEFAULTS.maturity_range;
-    const chainMult = 1 + MODEL_DEFAULTS.chain_step * Math.min(Math.max(p.chains.length - 1, 0), MODEL_DEFAULTS.chain_max);
-    return { p, row, implied, growthPct, maturity, chainMult, age };
+    const f = factorsOf(row, MODEL_DEFAULTS, null);
+    return { p, row, implied: f.implied, growthPct: f.growthPct, maturity: f.maturityMultiplier, chainMult: f.chainMultiplier, age };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => ({
@@ -337,6 +357,24 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
     }));
 }
 
+/** Every live-token protocol the detail view can compare against: the peers a multiple is checked
+ * against are the traded protocols in the same category, nearest by TVL — so a row's multiple is
+ * always shown next to the market's own multiples for its kind. CEX is left out: an exchange's
+ * token is not a comparable launch. */
+export function livePeers(snapshot: Snapshot): LivePeer[] {
+  return snapshot.protocols
+    .filter((p) => !isPreToken(p) && p.category !== 'CEX' && p.mcap_usd !== null && p.tvl_usd > 0)
+    .sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0)
+    .map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      category: p.category,
+      chains: p.chains,
+      tvl_usd: p.tvl_usd,
+      mcap_usd: p.mcap_usd!,
+    }));
+}
+
 /** The pre-token protocols the board sets aside, with the reason each one is not a launch. */
 export function setAsideRows(snapshot: Snapshot): SetAsideRow[] {
   return snapshot.protocols
@@ -378,6 +416,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const cal = calibrate(snapshot.protocols);
   const board = buildBoard(snapshot, cal);
   const live = liveRows(snapshot);
+  const peers = livePeers(snapshot);
   const setAside = setAsideRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const radar: RadarData = {
@@ -395,6 +434,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     global_multiple: cal.global,
     rows: board.map(radarRow),
     live,
+    peers,
     calibration: cal.table,
     set_aside: setAside,
   };

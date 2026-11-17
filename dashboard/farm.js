@@ -2,7 +2,13 @@
 // its TVL and its age. main.ts writes board.json's farm_steps with this same file, so the plan the
 // page shows and the plan board.json carries are the same steps by construction. No protocol name
 // is ever special-cased: the category table below decides the action, the TVL decides the capital,
-// the main chain decides the gas, and the age decides the hold.
+// the cheapest chain the protocol runs on decides the gas, and the age decides the hold.
+//
+// The chain matters because it is the cost: the same deposit costs under $0.05 a transaction on
+// Solana, about $0.05-0.50 on a cheap rollup, about $0.10-1 on a cheap L1, about $1-3 on Tron or
+// Bitcoin, and $8-15 on Ethereum. The plan farms on the cheapest chain the protocol runs on, and
+// repeats the position on the second-cheapest, so the wallet is active on two chains for the
+// lowest gas the protocol allows.
 
 /** The capital one farm position needs, from the protocol's own TVL. */
 export function capitalFor(tvlUsd) {
@@ -20,12 +26,62 @@ export function holdDaysFor(ageDays) {
   return 30;
 }
 
+/** Cheap rollups and L2s: about $0.05-0.50 a transaction. */
+const CHEAP_L2 = new Set([
+  'Arbitrum', 'Arbitrum Nova', 'Optimism', 'Base', 'Polygon', 'Polygon zkEVM', 'zkSync Era',
+  'Linea', 'Scroll', 'Blast', 'Unichain', 'Ink', 'Mode', 'Fraxtal', 'Mantle', 'Taiko', 'Morph',
+  'Soneium', 'Abstract', 'Sophon', 'Zora', 'Lens', 'MetalL2', 'Boba', 'Boba_Bnb', 'Boba_Avax',
+  'Metis', 'Manta', 'Lisk', 'ApeChain', 'X Layer', 'Op_Bnb', 'Cronos zkEVM', 'Immutable zkEVM',
+  'Astar zkEVM', 'Silicon zkEVM', 'Kroma', 'Zircuit', 'Swellchain', 'Hemi', 'Corn', 'Doma',
+  'Reya Network', 'Ethereal', 'RISE', 'Fluent', 'Mezo', 'Mint', 'Gravity', 'Odyssey', 'Tempo',
+  'Stable', 'Plasma', 'Katana', 'MegaETH', 'Pharos', 'Somnia', 'Story', 'Vana', 'Initia', 'Supra',
+  'Noble', 'Celestia', 'Sei', 'Starknet', 'Fuel', 'Aleo', 'KiteAI', 'Eclipse', 'Codex', 'Hibachi',
+  'Zkfair', 'zkLink', 'zkVerify', 'zkLighter', 'Canton', 'Irys', 'Fogo',
+]);
+
+/** What a transaction costs on a chain, by how expensive that chain is to use. */
+export function chainTier(chain) {
+  if (chain === 'Solana') return 0;
+  if (chain === 'Ethereum') return 4;
+  if (chain === 'Tron' || chain === 'Bitcoin') return 3;
+  if (CHEAP_L2.has(chain)) return 1;
+  return 2;
+}
+
 /** Gas reality by chain: Ethereum costs real money per transaction, Solana almost nothing. */
 export function gasFor(chain) {
-  if (chain === 'Ethereum') return { perTx: '$8-15', setup: 'about $12' };
-  if (chain === 'Solana') return { perTx: 'under $0.05', setup: 'under $0.10' };
-  if (chain === 'Tron' || chain === 'Bitcoin') return { perTx: 'about $1-3', setup: 'about $2' };
+  const tier = chainTier(chain);
+  if (tier === 0) return { perTx: 'under $0.05', setup: 'under $0.10' };
+  if (tier === 1) return { perTx: 'about $0.05-0.50', setup: 'about $0.25' };
+  if (tier === 3) return { perTx: 'about $1-3', setup: 'about $2' };
+  if (tier === 4) return { perTx: '$8-15', setup: 'about $12' };
   return { perTx: 'about $0.10-1', setup: 'about $0.50' };
+}
+
+/** The protocol's chains cheapest first; ties keep the snapshot's order. */
+export function cheapestChains(chains) {
+  const list = Array.isArray(chains) ? chains.slice() : [];
+  return list
+    .map((c, i) => ({ c, tier: chainTier(c), i }))
+    .sort((a, b) => a.tier - b.tier || a.i - b.i)
+    .map((x) => x.c);
+}
+
+/** The chain the plan farms on: the cheapest chain the protocol runs on. */
+export function farmChain(chains) {
+  const sorted = cheapestChains(chains);
+  return sorted.length > 0 ? sorted[0] : 'its main chain';
+}
+
+/** The plan's whole cost, in one place: capital, setup gas, weekly gas and the hold. */
+export function planSummary(p) {
+  const chain = farmChain(p.chains);
+  const second = cheapestChains(p.chains)[1] || null;
+  const gas = gasFor(chain);
+  const capital = capitalFor(p.tvl_usd);
+  const hold = holdDaysFor(p.age_days);
+  const weeks = Math.max(1, Math.ceil(hold / 7));
+  return { chain, secondChain: second, gas, capital, holdDays: hold, weeks };
 }
 
 /** The category's one action, in the words a farmer can follow. */
@@ -125,17 +181,19 @@ function stepText(text, cost, time) {
  * from the protocol's own record (category, chains, TVL, age), never from a hand-written list of
  * names, and never claims a points program or an airdrop the snapshot does not record. The weekly
  * action and the risk are the category's own, so a lender's week and a trader's week read
- * differently, and every plan names what can actually lose the money.
+ * differently, and every plan names what can actually lose the money. The chain is the cheapest
+ * the protocol runs on, so the same plan costs cents where it would cost tens of dollars on
+ * Ethereum — the cost summary in the detail view states the total.
  */
 export function farmStepsFor(p) {
-  const chain = p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain';
+  const chain = farmChain(p.chains);
   const gas = gasFor(chain);
   const capital = capitalFor(p.tvl_usd);
   const hold = holdDaysFor(p.age_days);
   const action = actionFor(p, capital, chain);
   const weekly = weeklyFor(p, capital, chain);
   const risk = riskFor(p);
-  const secondChain = p.chains && p.chains.length > 1 ? p.chains[1] : null;
+  const secondChain = cheapestChains(p.chains)[1] || null;
   const steps = [
     {
       text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline',

@@ -2,21 +2,25 @@
 //
 // One function scores every row, so the number the board shows, the number the page recomputes
 // in the detail view and the number board.json carries are the same by construction. The model
-// (radar-3) is: implied = TVL x multiple x growth x maturity x chains, where
+// (radar-4) is: implied = TVL x multiple x growth x maturity x chains, where
 //   multiple  = the category's shrunk multiple: the log-median market-cap / TVL of the live-token
 //                protocols in that category, pulled toward the global log-median with a prior
 //                worth shrinkage_peers peers — exp((n·ln(category) + k·ln(global)) / (n + k)) —
 //                clamped to [0.05, 2.0]; a category with no traded peers uses the global median
-//   growth    = 1 + clamp(change_7d, -60, 120) / 100 x growth_weight
+//   growth    = 1 + clamp(change_7d, -60, 40) / 100 x growth_weight. A single week's print is
+//                noise: the credit for one hot week is capped at +40%, so a +4000% week cannot
+//                more than double a protocol's value, and a -60% week is the worst it can do.
 //   maturity  = 0.6 + min(age_days, 1095) / 1095 x 0.4 (age unknown: 365 days)
-//   chains    = 1 + 0.02 x min(chains - 1, 5) — a protocol live on more chains reaches more users
+//   chains    = 1 + 0.05 x ln(chains), capped at 1.25. Breadth is logarithmic: each extra chain
+//                reaches fewer new users than the last, so a protocol on 85 chains is worth more
+//                than one on 6, but not fourteen times more.
 // No protocol name is ever special-cased: the same function scores every row.
 
 /** The model's constants, as the dashboard states them and the sandbox may scale them. */
 export const MODEL_DEFAULTS = {
   growth_weight: 0.5,
   growth_floor: -60,
-  growth_cap: 120,
+  growth_cap: 40,
   maturity_floor: 0.6,
   maturity_range: 0.4,
   maturity_days: 1095,
@@ -24,8 +28,8 @@ export const MODEL_DEFAULTS = {
   multiple_floor: 0.05,
   multiple_cap: 2.0,
   shrinkage_peers: 3,
-  chain_step: 0.02,
-  chain_max: 5,
+  chain_log_step: 0.05,
+  chain_cap: 1.25,
 };
 
 /** A growth figure clamped to the model's band; null or non-finite growth counts as zero. */
@@ -39,10 +43,11 @@ export function ageFor(row, model) {
   return row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
 }
 
-/** The chain-breadth multiplier: 1.00 on one chain, up to 1.10 on six or more. */
+/** The chain-breadth multiplier: 1.00 on one chain, 1.09 on six, 1.12 on eleven, 1.22 on eighty-five. */
 export function chainMultiplier(row, model) {
   const n = Array.isArray(row.chains) ? row.chains.length : 0;
-  return 1 + model.chain_step * Math.min(Math.max(n - 1, 0), model.chain_max);
+  if (n <= 1) return 1;
+  return Math.min(model.chain_cap, 1 + model.chain_log_step * Math.log(n));
 }
 
 /** The implied value of one row. `sandbox` may scale the multiple and override the growth weight. */
@@ -69,6 +74,7 @@ export function factorsOf(row, model, sandbox) {
     multiple,
     multipleSource: row.multiple_source || 'global',
     growthPct: growth,
+    growthRaw: row.change_7d === null || row.change_7d === undefined ? null : row.change_7d,
     growthMultiplier: growthMult,
     ageDays: age,
     ageKnown: row.age_days !== null && row.age_days !== undefined,
