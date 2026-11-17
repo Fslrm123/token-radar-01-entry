@@ -239,6 +239,7 @@ function boardTable() {
       el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
       el('td', { class: 'num ' + growthClass, text: growth }),
       el('td', { class: 'num', text: fmtAge(r.age_days) }),
+      el('td', { class: 'num', text: fmtMult(r.multiple) }),
       el('td', null, el('div', { class: 'implied' },
         el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((r.displayImplied / max) * 100)) + '%' })),
         el('span', { class: 'num', text: fmtUsd(r.displayImplied) }))),
@@ -255,6 +256,7 @@ function boardTable() {
           sortHeader('tvl', 'TVL'),
           sortHeader('growth', '7d'),
           sortHeader('age', 'Age'),
+          sortHeader('multiple', 'Multiple'),
           sortHeader('implied', 'Implied value'),
           el('th', { scope: 'col', text: 'Token' }))),
         tbody)));
