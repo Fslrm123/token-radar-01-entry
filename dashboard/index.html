@@ -3,12 +3,64 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar — pre-token protocols ranked by implied value</title>
+<title>TOKEN RADAR v5 — pre-token protocols ranked by implied launch value</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<main id="app" aria-busy="true"></main>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">▚</span> TOKEN RADAR <span class="brand-ver">v5 TERMINAL</span></div>
+  <div class="topstats" id="topstats"></div>
+  <div class="topright"><span class="dot"></span> SEALED SNAPSHOT · OFFLINE</div>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist">
+  <button class="tab on" data-view="board" role="tab">BOARD</button>
+  <button class="tab" data-view="live" role="tab">LIVE TOKENS</button>
+  <button class="tab" data-view="calib" role="tab">CALIBRATION</button>
+  <button class="tab" data-view="aside" role="tab">SET ASIDE</button>
+  <span class="tabs-note">pre-token protocols ranked by implied launch value · a protocol <em>records no token</em> — DefiLlama's record, not proof</span>
+</nav>
+
+<section class="toolbar" id="toolbar">
+  <label class="search"><span class="prompt">/</span><input id="q" type="search" placeholder="search protocol, slug, category…" autocomplete="off" spellcheck="false"></label>
+  <select id="fcat" aria-label="Category"><option value="">ALL CATEGORIES</option></select>
+  <select id="fchain" aria-label="Chain"><option value="">ALL CHAINS</option></select>
+  <select id="fband" aria-label="Implied value band">
+    <option value="">ALL VALUE BANDS</option>
+    <option value="100000000">IMPLIED ≥ $100M</option>
+    <option value="25000000">IMPLIED ≥ $25M</option>
+    <option value="5000000">IMPLIED ≥ $5M</option>
+    <option value="1000000">IMPLIED ≥ $1M</option>
+  </select>
+  <select id="ftier" aria-label="Tier">
+    <option value="">ALL TIERS</option>
+    <option value="S">TIER S</option>
+    <option value="A">TIER A</option>
+    <option value="B">TIER B</option>
+    <option value="C">TIER C</option>
+  </select>
+  <label class="check"><input type="checkbox" id="fwl"> WATCHLIST ONLY</label>
+  <span class="count" id="count"></span>
+</section>
+
+<main class="layout">
+  <section class="board-wrap">
+    <table class="board" id="board">
+      <colgroup id="cols"></colgroup>
+      <thead><tr id="headrow"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>NO PROTOCOLS MATCH THE CURRENT FILTERS</div>
+  </section>
+  <aside class="detail" id="detail"></aside>
+</main>
+
+<footer class="statusbar">
+  <span id="formula"></span>
+  <span class="keys">KEYS&nbsp; <b>/</b> search · <b>↑↓</b> move · <b>↵</b> open · <b>esc</b> clear</span>
+</footer>
+
 <script src="../data.js"></script>
-<script type="module" src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
